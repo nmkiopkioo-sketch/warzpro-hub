@@ -1,4 +1,4 @@
--- Language: Lua (Luau) | Pro Hub | ProScript v4.2 (Fixed & Universal)
+-- Language: Lua (Luau) | Pro Hub | ProScript v4.3 (Mobile & PC ESP Fix)
 -- Home = เปิด/ปิด UI | E = ล็อคเป้า
 
 local Players          = game:GetService("Players")
@@ -42,7 +42,7 @@ local PART_FALLBACK={
 }
 
 ----------------------------------------------------------------
--- SAFE DRAWING WRAPPER
+-- SAFE DRAWING WRAPPER (FOR MOBILE & PC)
 ----------------------------------------------------------------
 local function D_Square(filled, thick)
     local ok, d = pcall(function()
@@ -147,10 +147,7 @@ local function getAimPos(part)
     return (part.CFrame * CFrame.new(CFG.HeadOffsetX, CFG.HeadOffsetY, 0)).Position
 end
 
-----------------------------------------------------------------
--- ALIVE CHECK
-----------------------------------------------------------------
-local isAliveRaw = function(p)
+local function isAliveRaw(p)
     local char = p.Character
     if not char or not char.Parent then return false end
     local hum = char:FindFirstChildWhichIsA("Humanoid", true)
@@ -165,7 +162,7 @@ local isAliveRaw = function(p)
 end
 
 ----------------------------------------------------------------
--- ESP POOL
+-- ESP POOL (UNIVERSAL)
 ----------------------------------------------------------------
 local pool = {}
 local fovCircle = D_Circle()
@@ -407,7 +404,7 @@ local VerLbl = Instance.new("TextLabel")
 VerLbl.Size = UDim2.new(0, 80, 1, 0)
 VerLbl.Position = UDim2.new(0, 95, 0, 0)
 VerLbl.BackgroundTransparency = 1
-VerLbl.Text = "v4.2"
+VerLbl.Text = "v4.3"
 VerLbl.TextColor3 = T.SUBTEXT
 VerLbl.Font = Enum.Font.Gotham
 VerLbl.TextSize = 10
