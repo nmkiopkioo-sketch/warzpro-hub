@@ -1,5 +1,5 @@
--- Language: Lua (Luau) | Pro Hub | ProScript v4.1 (Mobile & PC Optimized)
--- Home / Minimize = เปิด/ปิด หรือย่อ UI | E = ล็อคเป้า
+-- Language: Lua (Luau) | Pro Hub | ProScript v4.2 (Fixed & Universal)
+-- Home = เปิด/ปิด UI | E = ล็อคเป้า
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -21,7 +21,7 @@ local CFG = {
     AimbotEnabled=true, AimbotKey=Enum.KeyCode.E, AimbotMode="กดค้าง",
     AimbotFOV=180, AimbotSmooth=0.50, AimbotTeamCheck=false,
     AimbotWallCheck=false, AimbotPart="Head",
-    HeadOffsetX=0.0, HeadOffsetY=-0.0,
+    HeadOffsetX=0.0, HeadOffsetY=0.0,
     ShowFOVCircle=true,
     ESPEnabled=true, ESPBox=true, ESPName=true,
     ESPDistance=true, ESPHealth=true, ESPTracers=true,
@@ -42,10 +42,10 @@ local PART_FALLBACK={
 }
 
 ----------------------------------------------------------------
--- DRAWING (ESP)
+-- SAFE DRAWING WRAPPER
 ----------------------------------------------------------------
 local function D_Square(filled, thick)
-    local success, d = pcall(function()
+    local ok, d = pcall(function()
         local obj = Drawing.new("Square")
         obj.Visible = false
         obj.Filled = filled or false
@@ -53,11 +53,11 @@ local function D_Square(filled, thick)
         obj.Transparency = 1
         return obj
     end)
-    return success and d or nil
+    return ok and d or nil
 end
 
 local function D_Text(size)
-    local success, d = pcall(function()
+    local ok, d = pcall(function()
         local obj = Drawing.new("Text")
         obj.Visible = false
         obj.Size = size or 13
@@ -67,22 +67,22 @@ local function D_Text(size)
         obj.Center = true
         return obj
     end)
-    return success and d or nil
+    return ok and d or nil
 end
 
 local function D_Line()
-    local success, d = pcall(function()
+    local ok, d = pcall(function()
         local obj = Drawing.new("Line")
         obj.Visible = false
         obj.Thickness = 1
         obj.Transparency = 1
         return obj
     end)
-    return success and d or nil
+    return ok and d or nil
 end
 
 local function D_Circle()
-    local success, d = pcall(function()
+    local ok, d = pcall(function()
         local obj = Drawing.new("Circle")
         obj.Visible = false
         obj.Thickness = 1
@@ -90,7 +90,7 @@ local function D_Circle()
         obj.Filled = false
         return obj
     end)
-    return success and d or nil
+    return ok and d or nil
 end
 
 ----------------------------------------------------------------
@@ -150,10 +150,7 @@ end
 ----------------------------------------------------------------
 -- ALIVE CHECK
 ----------------------------------------------------------------
-local deadFlags = {}
-local humRegistry = {}
-
-local function isAliveRaw(p)
+local isAliveRaw = function(p)
     local char = p.Character
     if not char or not char.Parent then return false end
     local hum = char:FindFirstChildWhichIsA("Humanoid", true)
@@ -172,7 +169,6 @@ end
 ----------------------------------------------------------------
 local pool = {}
 local fovCircle = D_Circle()
-if fovCircle then fovCircle.Color = CFG.ColorFOV end
 
 local function alloc(p)
     if pool[p] then return end
@@ -192,8 +188,6 @@ local function free(p)
         pcall(function() if d then d:Remove() end end)
     end
     pool[p] = nil
-    deadFlags[p] = nil
-    humRegistry[p] = nil
 end
 
 local function hideAll(e)
@@ -268,44 +262,18 @@ local function renderPlayer(p, e)
     end
 end
 
-local function hookCharacter(p, char)
-    task.spawn(function()
-        local hum
-        pcall(function() hum = char:WaitForChild("Humanoid", 8) end)
-        if not hum then hum = char:FindFirstChildWhichIsA("Humanoid", true) end
-        if not hum then return end
-        humRegistry[p] = hum
-        hum.Died:Connect(function() deadFlags[p] = true end)
-        hum.HealthChanged:Connect(function(hp) if hp <= 0 then deadFlags[p] = true end end)
-    end)
-end
-
-local function hookPlayer(p)
-    if p.Character then alloc(p); hookCharacter(p, p.Character) end
-    p.CharacterAdded:Connect(function(char)
-        deadFlags[p] = nil; humRegistry[p] = nil
-        char:WaitForChild("HumanoidRootPart", 5)
-        alloc(p); hookCharacter(p, char)
-    end)
-end
-
 for _, p in ipairs(Players:GetPlayers()) do
-    if p ~= LocalPlayer then hookPlayer(p) end
+    if p ~= LocalPlayer then alloc(p) end
 end
-Players.PlayerAdded:Connect(hookPlayer)
+Players.PlayerAdded:Connect(function(p) if p ~= LocalPlayer then alloc(p) end end)
 Players.PlayerRemoving:Connect(free)
 
 ----------------------------------------------------------------
--- AIMBOT LOGIC (Supports Mobile Camera & Mouse Move)
+-- AIMBOT & RENDER LOOP
 ----------------------------------------------------------------
-local aimbotTarget = nil
-local aimbotTargetPlayer = nil
 local aimbotToggleActive = false
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if not gameProcessed and input.KeyCode == Enum.KeyCode.Home then
-        -- กด Home ซ่อน/แสดง UI
-    end
     if not gameProcessed and CFG.AimbotMode == "สลับเปิดปิด" and input.KeyCode == CFG.AimbotKey then
         aimbotToggleActive = not aimbotToggleActive
     end
@@ -314,7 +282,7 @@ end)
 local function isAimbotFiring()
     if not CFG.AimbotEnabled then return false end
     if CFG.AimbotMode == "สลับเปิดปิด" then return aimbotToggleActive end
-    return UserInputService:IsKeyDown(CFG.AimbotKey) or UserInputService.TouchEnabled -- บนมือถือช่วยรันเมื่อเปิดใช้งาน
+    return UserInputService:IsKeyDown(CFG.AimbotKey) or UserInputService.TouchEnabled
 end
 
 local function getClosestTarget()
@@ -357,7 +325,9 @@ RunService.RenderStepped:Connect(function()
     if not CFG.ESPEnabled then
         for _, e in pairs(pool) do hideAll(e) end
     else
-        for p, e in pairs(pool) do renderPlayer(p, e) end
+        for p, e in pairs(pool) do
+            if p and p.Parent then renderPlayer(p, e) end
+        end
     end
 
     if not isAimbotFiring() then return end
@@ -366,7 +336,6 @@ RunService.RenderStepped:Connect(function()
     if player and part then
         local aimPos = getAimPos(part)
         if aimPos then
-            -- ปรับมุมมองกล้องโดยตรง (รองรับทั้ง PC และ มือถือ 100%)
             local smooth = math.clamp(CFG.AimbotSmooth, 0.01, 1)
             local targetCFrame = CFrame.new(Camera.CFrame.Position, aimPos)
             Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, smooth)
@@ -375,13 +344,14 @@ RunService.RenderStepped:Connect(function()
 end)
 
 ----------------------------------------------------------------
--- GUI (Modern Green Theme, Draggable, Resizable, Minimizable)
+-- GUI (Modern Green Theme)
 ----------------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ProScriptUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = game:GetService("CoreGui")
+pcall(function() ScreenGui.Parent = game:GetService("CoreGui") end)
+if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local WIN_W, WIN_H = 340, 520
 local Window = Instance.new("Frame")
@@ -437,14 +407,13 @@ local VerLbl = Instance.new("TextLabel")
 VerLbl.Size = UDim2.new(0, 80, 1, 0)
 VerLbl.Position = UDim2.new(0, 95, 0, 0)
 VerLbl.BackgroundTransparency = 1
-VerLbl.Text = "v4.1"
+VerLbl.Text = "v4.2"
 VerLbl.TextColor3 = T.SUBTEXT
 VerLbl.Font = Enum.Font.Gotham
 VerLbl.TextSize = 10
 VerLbl.TextXAlignment = Enum.TextXAlignment.Left
 VerLbl.Parent = TitleBar
 
--- ปุ่มปิด (X)
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 26, 0, 26)
 CloseBtn.Position = UDim2.new(1, -34, 0.5, -13)
@@ -460,7 +429,6 @@ CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui.Enabled = false
 end)
 
--- ปุ่มย่อ/ขยายส่วน (- / +)
 local minimized = false
 local MinBtn = Instance.new("TextButton")
 MinBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -477,15 +445,12 @@ Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(1, 0)
 ----------------------------------------------------------------
 -- DRAGGING & RESIZING
 ----------------------------------------------------------------
-local dragging, dragInput, dragStart, startPos
+local dragging, dragStart, startPos
 TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
         startPos = Window.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
-        end)
     end
 end)
 
@@ -493,6 +458,12 @@ UserInputService.InputChanged:Connect(function(input)
     if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragging then
         local delta = input.Position - dragStart
         Window.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
     end
 end)
 
@@ -518,9 +489,7 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and resizing then
         local delta = input.Position - resizeStart
-        local newW = math.clamp(startSize.X.Offset + delta.X, 300, 600)
-        local newH = math.clamp(startSize.Y.Offset + delta.Y, 350, 700)
-        Window.Size = UDim2.new(0, newW, 0, newH)
+        Window.Size = UDim2.new(0, math.clamp(startSize.X.Offset + delta.X, 300, 600), 0, math.clamp(startSize.Y.Offset + delta.Y, 350, 700))
     end
 end)
 
@@ -531,7 +500,7 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 ----------------------------------------------------------------
--- TABS & CONTENT CONTAINER
+-- TABS & CONTENT
 ----------------------------------------------------------------
 local TAB_H = 36
 local TabBar = Instance.new("Frame")
@@ -557,10 +526,9 @@ ContentHolder.BackgroundTransparency = 1
 ContentHolder.ClipsDescendants = true
 ContentHolder.Parent = Window
 
--- ฟังก์ชันปุ่มย่อ/ขยาย
 MinBtn.MouseButton1Click:Connect(function()
     minimized = not minimized
-    MinBtn.Text = minimized and "+" : "-"
+    MinBtn.Text = minimized and "+" or "-"
     TweenService:Create(Window, TweenInfo.new(0.2), {
         Size = minimized and UDim2.new(0, WIN_W, 0, 48) or UDim2.new(0, WIN_W, 0, WIN_H)
     }):Play()
@@ -645,7 +613,7 @@ for i, def in ipairs(TABS) do
 end
 
 ----------------------------------------------------------------
--- GUI BUILDERS (UI Components)
+-- GUI BUILDERS
 ----------------------------------------------------------------
 local function makeSection(title, parent)
     local f = Instance.new("Frame")
