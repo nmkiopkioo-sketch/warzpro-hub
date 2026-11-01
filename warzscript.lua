@@ -1,4 +1,4 @@
--- Language: Lua (Luau) | Pro Hub | ProScript v4.3 (Mobile & PC ESP Fix)
+-- Language: Lua (Luau) | Pro Hub | ProScript v4.4 (Universal 3D ESP for Mobile & PC)
 -- Home = เปิด/ปิด UI | E = ล็อคเป้า
 
 local Players          = game:GetService("Players")
@@ -24,11 +24,10 @@ local CFG = {
     HeadOffsetX=0.0, HeadOffsetY=0.0,
     ShowFOVCircle=true,
     ESPEnabled=true, ESPBox=true, ESPName=true,
-    ESPDistance=true, ESPHealth=true, ESPTracers=true,
+    ESPDistance=true, ESPHealth=true, ESPTracers=false,
     ESPMaxDist=1500, ESPWallCheck=false,
     ColorEnemy=Color3.fromRGB(255,65,65), ColorTeammate=Color3.fromRGB(60,190,255),
-    ColorTracer=Color3.fromRGB(0,250,120), ColorText=Color3.fromRGB(255,255,255),
-    ColorHP=Color3.fromRGB(0,240,90), ColorHPLow=Color3.fromRGB(255,60,60),
+    ColorText=Color3.fromRGB(255,255,255),
     ColorFOV=Color3.fromRGB(0,255,120),
 }
 
@@ -42,56 +41,17 @@ local PART_FALLBACK={
 }
 
 ----------------------------------------------------------------
--- SAFE DRAWING WRAPPER (FOR MOBILE & PC)
+-- SAFE FOV CIRCLE DRAWING
 ----------------------------------------------------------------
-local function D_Square(filled, thick)
-    local ok, d = pcall(function()
-        local obj = Drawing.new("Square")
-        obj.Visible = false
-        obj.Filled = filled or false
-        obj.Thickness = thick or 1
-        obj.Transparency = 1
-        return obj
-    end)
-    return ok and d or nil
-end
-
-local function D_Text(size)
-    local ok, d = pcall(function()
-        local obj = Drawing.new("Text")
-        obj.Visible = false
-        obj.Size = size or 13
-        obj.Outline = true
-        obj.OutlineColor = Color3.new(0,0,0)
-        obj.Transparency = 1
-        obj.Center = true
-        return obj
-    end)
-    return ok and d or nil
-end
-
-local function D_Line()
-    local ok, d = pcall(function()
-        local obj = Drawing.new("Line")
-        obj.Visible = false
-        obj.Thickness = 1
-        obj.Transparency = 1
-        return obj
-    end)
-    return ok and d or nil
-end
-
-local function D_Circle()
-    local ok, d = pcall(function()
-        local obj = Drawing.new("Circle")
-        obj.Visible = false
-        obj.Thickness = 1
-        obj.Transparency = 1
-        obj.Filled = false
-        return obj
-    end)
-    return ok and d or nil
-end
+local fovCircle = nil
+pcall(function()
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Visible = false
+    fovCircle.Thickness = 1
+    fovCircle.Transparency = 1
+    fovCircle.Filled = false
+    fovCircle.Color = CFG.ColorFOV
+end)
 
 ----------------------------------------------------------------
 -- UTILS
@@ -113,14 +73,6 @@ local function getAimPart(char)
         if part and part:IsA("BasePart") then return part end
     end
     return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChildWhichIsA("BasePart")
-end
-
-local function w2s(pos)
-    local v, on = Camera:WorldToViewportPoint(pos)
-    if not on or v.Z <= 0 then return Vector2.new(v.X, v.Y), false end
-    local vp = Camera.ViewportSize
-    if v.X < 0 or v.Y < 0 or v.X > vp.X or v.Y > vp.Y then return Vector2.new(v.X, v.Y), false end
-    return Vector2.new(v.X, v.Y), true
 end
 
 local function screenCenter() 
@@ -162,111 +114,63 @@ local function isAliveRaw(p)
 end
 
 ----------------------------------------------------------------
--- ESP POOL (UNIVERSAL)
+-- UNIVERSAL 3D ESP (WORK ON MOBILE & PC)
 ----------------------------------------------------------------
-local pool = {}
-local fovCircle = D_Circle()
+local espFolder = Instance.new("Folder")
+espFolder.Name = "ProScript_ESP"
+pcall(function() espFolder.Parent = game:GetService("CoreGui") end)
+if not espFolder.Parent then espFolder.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
-local function alloc(p)
-    if pool[p] then return end
-    pool[p] = {
-        box = D_Square(false, 1),
-        name = D_Text(13),
-        dist = D_Text(11),
-        hpBg = D_Square(true, 1),
-        hpBar = D_Square(true, 1),
-        tracer = D_Line(),
-    }
+local espCache = {}
+
+local function createESP(p)
+    if espCache[p] then return end
+    
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = p.Name
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 100, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.Enabled = false
+    billboard.Parent = espFolder
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "InfoText"
+    nameLabel.Size = UDim2.new(1, 0, 1, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextSize = 12
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Text = p.Name
+    nameLabel.Parent = billboard
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "HighlightBox"
+    highlight.Adornee = nil
+    highlight.FillTransparency = 0.8
+    highlight.OutlineTransparency = 0.2
+    highlight.Parent = espFolder
+
+    espCache[p] = {billboard = billboard, text = nameLabel, highlight = highlight}
 end
 
-local function free(p)
-    if not pool[p] then return end
-    for _, d in pairs(pool[p]) do
-        pcall(function() if d then d:Remove() end end)
-    end
-    pool[p] = nil
-end
-
-local function hideAll(e)
-    if not e then return end
-    for _, d in pairs(e) do
-        if d then d.Visible = false end
-    end
-end
-
-local function renderPlayer(p, e)
-    if not isAliveRaw(p) then hideAll(e) return end
-    local root, head, hum = getParts(p)
-    if not root then
-        local char = p.Character
-        if char then root = char:FindFirstChildWhichIsA("BasePart") end
-    end
-    if not head then head = root end
-    if not root or not hum then hideAll(e) return end
-
-    local dist3D = (root.Position - Camera.CFrame.Position).Magnitude
-    if dist3D > CFG.ESPMaxDist then hideAll(e) return end
-    if CFG.ESPWallCheck and not hasLOS(Camera.CFrame.Position, head.Position, p.Character) then hideAll(e) return end
-
-    local topSP, topOn = w2s(head.Position + Vector3.new(0, 0.7, 0))
-    local botSP, botOn = w2s(root.Position - Vector3.new(0, 3.0, 0))
-    if not topOn and not botOn then hideAll(e) return end
-
-    local bH = math.max(math.abs(topSP.Y - botSP.Y), 1)
-    local bW = bH * 0.6
-    local bX = topSP.X - bW / 2
-    local col = isEnemy(p) and CFG.ColorEnemy or CFG.ColorTeammate
-
-    if e.box then
-        e.box.Visible = CFG.ESPBox
-        e.box.Color = col
-        e.box.Position = Vector2.new(bX, topSP.Y)
-        e.box.Size = Vector2.new(bW, bH)
-    end
-
-    if e.name then
-        e.name.Visible = CFG.ESPName
-        e.name.Color = CFG.ColorText
-        e.name.Text = p.Name
-        e.name.Position = Vector2.new(topSP.X, topSP.Y - 16)
-    end
-
-    if e.dist then
-        e.dist.Visible = CFG.ESPDistance
-        e.dist.Text = string.format("[%dm]", math.floor(dist3D / 4))
-        e.dist.Position = Vector2.new(topSP.X, topSP.Y - 28)
-    end
-
-    local hpR = hum.MaxHealth > 0 and math.clamp(hum.Health / hum.MaxHealth, 0, 1) or 0
-    if e.hpBg then
-        e.hpBg.Visible = CFG.ESPHealth
-        e.hpBg.Position = Vector2.new(bX - 6, topSP.Y)
-        e.hpBg.Size = Vector2.new(3, bH)
-    end
-
-    if e.hpBar then
-        e.hpBar.Visible = CFG.ESPHealth
-        e.hpBar.Color = hpR > 0.4 and CFG.ColorHP or CFG.ColorHPLow
-        e.hpBar.Position = Vector2.new(bX - 6, topSP.Y + bH - bH * hpR)
-        e.hpBar.Size = Vector2.new(3, math.max(bH * hpR, 1))
-    end
-
-    if e.tracer then
-        e.tracer.Visible = CFG.ESPTracers
-        e.tracer.Color = CFG.ColorTracer
-        e.tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
-        e.tracer.To = botSP
+local function removeESP(p)
+    if espCache[p] then
+        if espCache[p].billboard then espCache[p].billboard:Destroy() end
+        if espCache[p].highlight then espCache[p].highlight:Destroy() end
+        espCache[p] = nil
     end
 end
 
 for _, p in ipairs(Players:GetPlayers()) do
-    if p ~= LocalPlayer then alloc(p) end
+    if p ~= LocalPlayer then createESP(p) end
 end
-Players.PlayerAdded:Connect(function(p) if p ~= LocalPlayer then alloc(p) end end)
-Players.PlayerRemoving:Connect(free)
+Players.PlayerAdded:Connect(function(p) if p ~= LocalPlayer then createESP(p) end end)
+Players.PlayerRemoving:Connect(removeESP)
 
 ----------------------------------------------------------------
--- AIMBOT & RENDER LOOP
+-- AIMBOT & ESP UPDATE LOOP
 ----------------------------------------------------------------
 local aimbotToggleActive = false
 
@@ -316,14 +220,41 @@ RunService.RenderStepped:Connect(function()
         fovCircle.Visible = CFG.ShowFOVCircle
         fovCircle.Position = screenCenter()
         fovCircle.Radius = CFG.AimbotFOV
-        fovCircle.Color = CFG.ColorFOV
     end
 
-    if not CFG.ESPEnabled then
-        for _, e in pairs(pool) do hideAll(e) end
-    else
-        for p, e in pairs(pool) do
-            if p and p.Parent then renderPlayer(p, e) end
+    -- อัปเดต ESP ทุกคน
+    for p, cache in pairs(espCache) do
+        local char = p.Character
+        local root, head, hum = getParts(p)
+        if CFG.ESPEnabled and isAliveRaw(p) and root and head and hum then
+            local dist3D = (root.Position - Camera.CFrame.Position).Magnitude
+            if dist3D <= CFG.ESPMaxDist then
+                cache.billboard.Adornee = head
+                cache.billboard.Enabled = true
+                cache.highlight.Adornee = char
+                cache.highlight.Enabled = CFG.ESPBox
+
+                local col = isEnemy(p) and CFG.ColorEnemy or CFG.ColorTeammate
+                cache.highlight.FillColor = col
+                cache.highlight.OutlineColor = col
+
+                local txt = ""
+                if CFG.ESPName then txt = p.Name end
+                if CFG.ESPDistance then txt = txt .. string.format(" [%dm]", math.floor(dist3D / 4)) end
+                if CFG.ESPHealth then
+                    local hp = math.floor(hum.Health)
+                    local maxHp = math.floor(hum.MaxHealth)
+                    txt = txt .. string.format(" - HP: %d/%d", hp, maxHp)
+                end
+                cache.text.Text = txt
+                cache.text.TextColor3 = CFG.ColorText
+            else
+                cache.billboard.Enabled = false
+                cache.highlight.Enabled = false
+            end
+        else
+            cache.billboard.Enabled = false
+            cache.highlight.Enabled = false
         end
     end
 
@@ -404,7 +335,7 @@ local VerLbl = Instance.new("TextLabel")
 VerLbl.Size = UDim2.new(0, 80, 1, 0)
 VerLbl.Position = UDim2.new(0, 95, 0, 0)
 VerLbl.BackgroundTransparency = 1
-VerLbl.Text = "v4.3"
+VerLbl.Text = "v4.4"
 VerLbl.TextColor3 = T.SUBTEXT
 VerLbl.Font = Enum.Font.Gotham
 VerLbl.TextSize = 10
@@ -844,10 +775,8 @@ makeSlider("ปรับเป้าแกน Y", -1.0, 1.0, CFG.HeadOffsetY, 0.
 
 makeSection("ระบบมองทะลุ (ESP)", TabESP)
 makeToggle("เปิดใช้งาน ESP", CFG.ESPEnabled, function(v) CFG.ESPEnabled = v end, TabESP)
-makeToggle("แสดงกรอบสี่เหลี่ยม", CFG.ESPBox, function(v) CFG.ESPBox = v end, TabESP)
+makeToggle("แสดงกรอบเรืองแสง", CFG.ESPBox, function(v) CFG.ESPBox = v end, TabESP)
 makeToggle("แสดงชื่อผู้เล่น", CFG.ESPName, function(v) CFG.ESPName = v end, TabESP)
 makeToggle("แสดงระยะทาง", CFG.ESPDistance, function(v) CFG.ESPDistance = v end, TabESP)
 makeToggle("แสดงพลังชีวิต", CFG.ESPHealth, function(v) CFG.ESPHealth = v end, TabESP)
-makeToggle("แสดงเส้นนำทาง", CFG.ESPTracers, function(v) CFG.ESPTracers = v end, TabESP)
-makeToggle("เช็คสิ่งกีดขวาง ESP", CFG.ESPWallCheck, function(v) CFG.ESPWallCheck = v end, TabESP)
 makeSlider("ระยะทางสูงสุด", 100, 5000, CFG.ESPMaxDist, 50, function(v) CFG.ESPMaxDist = v end, TabESP)
